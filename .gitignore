@@ -1,0 +1,16 @@
+# Build artifacts
+build/
+
+# Working/research files not for public release
+gemini/
+implementation_plan.md
+master_verification_protocol.md
+task.md
+verification_mandate.md
+walkthrough.md
+
+# Editor / OS noise
+.vscode/
+*.swp
+*~
+.DS_Store
