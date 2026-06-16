@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.benm.MwbLinuxBridge</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="dev.benm">
+    <name>Ben</name>
+  </developer>
+  <name>MWB Linux Bridge</name>
+  <summary>PowerToys Mouse Without Borders compatible Linux bridge</summary>
+  <description>
+    <p>
+      MWB Linux Bridge provides a Linux GUI and native input bridge for
+      interoperating with Microsoft PowerToys Mouse Without Borders on a trusted
+      local network.
+    </p>
+    <p>
+      The app configures a Windows host, stores local settings, checks uinput
+      access, and starts the bundled native bridge client.
+    </p>
+  </description>
+  <launchable type="desktop-id">dev.benm.MwbLinuxBridge.desktop</launchable>
+  <url type="homepage">https://github.com/benm-dev/mwb-linux-bridge</url>
+  <provides>
+    <binary>mwb-linux-bridge-gui</binary>
+    <binary>mwb-client</binary>
+  </provides>
+  <releases>
+    <release version="0.1.0" date="2026-06-16"/>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

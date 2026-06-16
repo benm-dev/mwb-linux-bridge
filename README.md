@@ -25,12 +25,16 @@ Works on both X11 and Wayland via Linux's `uinput` kernel interface.
 mwb-linux-bridge/
 ├── CMakeLists.txt
 ├── Dockerfile
+├── flatpak/
+│   ├── dev.benm.MwbLinuxBridge.yml
+│   └── build-flatpak.sh
 ├── gui/
 │   ├── package.json
 │   └── src/
 ├── packaging/
 │   ├── 90-mwb-client-uinput.rules
 │   ├── config.example
+│   ├── install-uinput-rule.sh
 │   ├── README.Fedora.md
 │   └── mwb-linux-bridge.spec
 ├── README.md
@@ -68,6 +72,33 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
 Log out and back in for group membership to take effect.
+
+## Universal Linux Install (Flatpak)
+
+Flatpak is the preferred universal Linux packaging target for the GUI. It bundles the Electron frontend and the native `mwb-client` bridge binary into one installable bundle.
+
+Install build tools:
+
+```bash
+# Fedora
+sudo dnf install flatpak flatpak-builder
+
+# Debian / Ubuntu
+sudo apt install flatpak flatpak-builder
+```
+
+Build and install the local Flatpak bundle:
+
+```bash
+./packaging/install-uinput-rule.sh
+npm --prefix gui run dist:linux
+flatpak install --user ./dist/dev.benm.MwbLinuxBridge.flatpak
+flatpak run dev.benm.MwbLinuxBridge
+```
+
+The bundle is written to `dist/dev.benm.MwbLinuxBridge.flatpak`.
+
+Flatpak can request device access, but it cannot install host udev rules. Run `./packaging/install-uinput-rule.sh` once on the host so the app can open `/dev/uinput`.
 
 ## Usage
 
@@ -124,14 +155,23 @@ npm install
 npm start
 ```
 
-Build the GUI RPM:
+Build the universal Flatpak bundle:
 
 ```bash
 cd gui
 npm run dist:linux
 ```
 
-The RPM is copied to the repo-level `dist/` directory. It installs the GUI as `mwb-linux-bridge-gui`, adds a desktop entry, and depends on the native `mwb-linux-bridge` package for the actual input bridge.
+The Flatpak bundle is copied to the repo-level `dist/` directory and includes both the GUI and native bridge.
+
+Build the Fedora-native GUI RPM instead:
+
+```bash
+cd gui
+npm run dist:rpm
+```
+
+The GUI RPM is copied to the repo-level `dist/` directory. It installs the GUI as `mwb-linux-bridge-gui`, adds a desktop entry, and depends on the native `mwb-linux-bridge` package for the actual input bridge.
 
 The GUI checks the session type, desktop name, `/dev/uinput` access, and the resolved `mwb-client` binary path. It can save connection settings to `~/.config/mwb-linux-bridge/config` and, if selected, store the key in `~/.config/mwb-linux-bridge/key` with private file permissions.
 
@@ -172,6 +212,13 @@ Or create and use the default config:
 ```bash
 mwb-client --init-config
 mwb-client
+```
+
+To build the Fedora-native GUI RPM, run:
+
+```bash
+cd gui
+npm run dist:rpm
 ```
 
 ## Protocol Notes

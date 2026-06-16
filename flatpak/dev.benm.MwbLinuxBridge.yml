@@ -1,0 +1,55 @@
+app-id: dev.benm.MwbLinuxBridge
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+command: mwb-linux-bridge-gui
+
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=all
+  - --env=ELECTRON_OZONE_PLATFORM_HINT=auto
+
+modules:
+  - name: mwb-client
+    buildsystem: simple
+    build-commands:
+      - g++ -O2 -std=c++17 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -fPIE -pie -I src src/main.cpp src/CryptoHelper.cpp src/InputManager.cpp src/NetworkManager.cpp -lssl -lcrypto -lpthread -o mwb-client
+      - install -Dpm 0755 mwb-client /app/bin/mwb-client
+    sources:
+      - type: dir
+        path: ..
+        skip:
+          - .git
+          - .flatpak-builder
+          - build
+          - dist
+          - gui/node_modules
+          - gui/dist
+
+  - name: mwb-linux-bridge-gui
+    buildsystem: simple
+    build-commands:
+      - install -d /app/mwb-linux-bridge-gui
+      - bash -c 'shopt -s dotglob; for item in *; do [ "$item" = flatpak-assets ] && continue; cp -a "$item" /app/mwb-linux-bridge-gui/; done'
+      - install -Dpm 0755 flatpak-assets/mwb-linux-bridge-gui-flatpak.sh /app/bin/mwb-linux-bridge-gui
+      - install -Dpm 0644 flatpak-assets/dev.benm.MwbLinuxBridge.desktop /app/share/applications/dev.benm.MwbLinuxBridge.desktop
+      - install -Dpm 0644 flatpak-assets/dev.benm.MwbLinuxBridge.svg /app/share/icons/hicolor/scalable/apps/dev.benm.MwbLinuxBridge.svg
+      - install -Dpm 0644 flatpak-assets/dev.benm.MwbLinuxBridge.metainfo.xml /app/share/metainfo/dev.benm.MwbLinuxBridge.metainfo.xml
+    sources:
+      - type: dir
+        path: ../gui/dist/linux-unpacked
+      - type: file
+        path: mwb-linux-bridge-gui-flatpak.sh
+        dest: flatpak-assets
+      - type: file
+        path: dev.benm.MwbLinuxBridge.desktop
+        dest: flatpak-assets
+      - type: file
+        path: dev.benm.MwbLinuxBridge.svg
+        dest: flatpak-assets
+      - type: file
+        path: dev.benm.MwbLinuxBridge.metainfo.xml
+        dest: flatpak-assets

@@ -12,7 +12,8 @@
     "start": "electron .",
     "test": "node --test test/*.test.js",
     "dist:dir": "electron-builder --linux dir",
-    "dist:linux": "npm run dist:rpm",
+    "dist:linux": "npm run dist:flatpak",
+    "dist:flatpak": "bash ../flatpak/build-flatpak.sh",
     "dist:rpm": "bash scripts/build-rpm.sh"
   },
   "devDependencies": {

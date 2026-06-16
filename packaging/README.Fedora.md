@@ -37,7 +37,15 @@ The Electron GUI lives in `gui/` and builds a Fedora RPM:
 ```bash
 cd gui
 npm install
-npm run dist:linux
+npm run dist:rpm
 ```
 
 The GUI RPM is copied to the repo-level `dist/` directory. It installs `/usr/bin/mwb-linux-bridge-gui` and still launches the `mwb-client` binary installed by this RPM or selected manually in the GUI.
+
+For a more universal Linux GUI package, build the Flatpak bundle instead:
+
+```bash
+./packaging/install-uinput-rule.sh
+npm --prefix gui run dist:linux
+flatpak install --user ./dist/dev.benm.MwbLinuxBridge.flatpak
+```
