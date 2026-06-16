@@ -32,7 +32,7 @@ This client interoperates with the existing PowerToys protocol. That protocol us
 
 ## GUI
 
-The Electron GUI lives in `gui/` and can build a portable AppImage:
+The Electron GUI lives in `gui/` and builds a Fedora RPM:
 
 ```bash
 cd gui
@@ -40,4 +40,4 @@ npm install
 npm run dist:linux
 ```
 
-The GUI still launches the `mwb-client` binary installed by this RPM or selected manually in the GUI.
+The GUI RPM is copied to the repo-level `dist/` directory. It installs `/usr/bin/mwb-linux-bridge-gui` and still launches the `mwb-client` binary installed by this RPM or selected manually in the GUI.

@@ -124,12 +124,14 @@ npm install
 npm start
 ```
 
-Build the portable Linux AppImage:
+Build the GUI RPM:
 
 ```bash
 cd gui
 npm run dist:linux
 ```
+
+The RPM is copied to the repo-level `dist/` directory. It installs the GUI as `mwb-linux-bridge-gui`, adds a desktop entry, and depends on the native `mwb-linux-bridge` package for the actual input bridge.
 
 The GUI checks the session type, desktop name, `/dev/uinput` access, and the resolved `mwb-client` binary path. It can save connection settings to `~/.config/mwb-linux-bridge/config` and, if selected, store the key in `~/.config/mwb-linux-bridge/key` with private file permissions.
 

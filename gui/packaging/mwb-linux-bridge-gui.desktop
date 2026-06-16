@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=MWB Linux Bridge
+Comment=Configure and run a PowerToys Mouse Without Borders compatible Linux bridge
+Exec=/usr/bin/mwb-linux-bridge-gui
+Terminal=false
+Type=Application
+Icon=mwb-linux-bridge-gui
+Categories=Utility;
+StartupWMClass=mwb-linux-bridge

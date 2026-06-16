@@ -12,8 +12,8 @@
     "start": "electron .",
     "test": "node --test test/*.test.js",
     "dist:dir": "electron-builder --linux dir",
-    "dist:linux": "electron-builder --linux AppImage",
-    "dist:rpm": "electron-builder --linux rpm"
+    "dist:linux": "npm run dist:rpm",
+    "dist:rpm": "bash scripts/build-rpm.sh"
   },
   "devDependencies": {
     "electron": "42.4.0",
@@ -31,9 +31,7 @@
       "category": "Utility",
       "synopsis": "PowerToys Mouse Without Borders compatible Linux bridge",
       "syncDesktopName": true,
-      "target": [
-        "AppImage"
-      ],
+      "target": [],
       "maintainer": "Ben"
     }
   }
