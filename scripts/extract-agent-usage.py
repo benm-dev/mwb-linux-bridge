@@ -7,6 +7,9 @@ import argparse
 import glob
 import json
 import os
+import shutil
+import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -277,8 +280,57 @@ def print_claude(sessions: list[ClaudeSession], limit: int) -> None:
     print("  note: Claude est excludes cache-read discounts/costs unless priced above.")
 
 
-def print_antigravity() -> None:
+def load_agy_models(cache_seconds: int) -> tuple[str, list[str]]:
+    cache_path = Path("/tmp/mwb-agent-usage-agy-models.json")
+    now = time.time()
+    if cache_seconds > 0 and cache_path.exists():
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            if now - float(cached.get("time", 0)) < cache_seconds:
+                models = cached.get("models")
+                if isinstance(models, list):
+                    return "cached", [str(model) for model in models]
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            pass
+
+    if shutil.which("agy") is None:
+        return "missing", []
+
+    try:
+        result = subprocess.run(
+            ["agy", "models"],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=8,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "unavailable", []
+
+    if result.returncode != 0:
+        return "unavailable", []
+
+    models = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if cache_seconds > 0:
+        try:
+            cache_path.write_text(json.dumps({"time": now, "models": models}), encoding="utf-8")
+        except OSError:
+            pass
+    return "live", models
+
+
+def print_antigravity(check_agy: bool, cache_seconds: int) -> None:
     print("Antigravity local token totals:")
+    if check_agy:
+        status, models = load_agy_models(cache_seconds)
+        if models:
+            sample = ", ".join(models[:3])
+            print(f"  agy auth/models: ok ({len(models)} models, {status}; {sample})")
+        elif status == "missing":
+            print("  agy auth/models: agy command not found")
+        else:
+            print("  agy auth/models: unavailable")
     print("  no stable local token/credit records found; app quota is cloud-account data")
 
 
@@ -286,6 +338,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default="/home/ben/Documents/Mouse without borders")
     parser.add_argument("--limit", type=int, default=8)
+    parser.add_argument("--check-agy", action="store_true", help="check agy auth/model access")
+    parser.add_argument("--agy-cache-seconds", type=int, default=300)
     args = parser.parse_args()
 
     root = Path(args.root).resolve()
@@ -295,7 +349,7 @@ def main() -> int:
     print()
     print_claude(parse_claude_sessions(), limit)
     print()
-    print_antigravity()
+    print_antigravity(args.check_agy, max(args.agy_cache_seconds, 0))
     print()
     print("Pricing notes: estimates use local token metadata plus configured public API rates; they are not provider invoices.")
     return 0

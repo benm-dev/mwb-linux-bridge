@@ -31,6 +31,7 @@ The usage monitor watches:
 - Codex process command lines, including selected model when present
 - Codex local JSONL token totals from `~/.codex/sessions`
 - Claude local JSONL token totals from `~/.claude/projects`
+- Antigravity `agy models` auth/model availability, cached between monitor refreshes
 - rough USD estimates where local token totals and configured public API prices are available
 
-These are local telemetry signals, not provider invoices. Antigravity quota appears to be cloud-account data surfaced by the logged-in app; no stable local token/credit record or `agy` command is available here yet.
+These are local telemetry signals, not provider invoices. Antigravity quota appears to be cloud-account data surfaced by the logged-in app; `agy models` confirms login/model access, but no stable local token/credit total command is available here yet.
