@@ -77,7 +77,7 @@ snapshot_usage() {
         printf 'time=%s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
         printf 'session=%s\n' "${session_name}"
         printf 'agent_windows=%s/%s\n' "$(agent_count)" "${max_agent_windows}"
-        ps -u "$USER" -o pid,pcpu,pmem,etime,comm,args \
+        ps -ww -u "$USER" -o pid,pcpu,pmem,etime,comm,args \
             | awk 'NR == 1 || /(^|[[:space:]])(claude|codex|agy)([[:space:]]|$)/ {print}'
     } > "${report_dir}/usage-last-route.txt"
 }

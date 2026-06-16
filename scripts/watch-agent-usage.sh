@@ -32,14 +32,14 @@ while true; do
     tmux list-windows -t "${session_name}" -F '  #I:#W #{pane_current_command} #{pane_active}' 2>/dev/null || printf '  session not running\n'
 
     printf '\nagent processes:\n'
-    ps -u "$USER" -o pid,pcpu,pmem,etime,stat,comm,args \
+    ps -ww -u "$USER" -o pid,pcpu,pmem,etime,stat,comm,args \
         | awk 'NR == 1 || /(^|[[:space:]])(claude|codex|agy)([[:space:]]|$)/ {print}' \
         | sed -n '1,40p'
 
     printf '\ncodex model usage:\n'
-    ps -u "$USER" -o args \
+    ps -ww -u "$USER" -o comm,args \
         | awk '
-            /(^|[[:space:]])codex([[:space:]]|$)/ {
+            $1 == "codex" || $0 ~ /\/codex([[:space:]]|$)/ {
                 model="default";
                 for (i=1; i<=NF; i++) {
                     if ($i == "--model" || $i == "-m") {
