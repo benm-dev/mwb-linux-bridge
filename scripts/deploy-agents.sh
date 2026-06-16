@@ -169,6 +169,9 @@ Windows:
 $([[ -n "${antigravity_cli}" ]] && printf '  %s:antigravity-verify\n' "${session_name}")
   ${session_name}:usage
 
+Route new work:
+  ./scripts/route-agent-task.sh "TASK"
+
 Worktrees:
   ${claude_worktree}
   ${codex_worktree}

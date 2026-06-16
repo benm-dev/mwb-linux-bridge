@@ -18,6 +18,8 @@ This directory coordinates parallel Claude, Codex, and optional Antigravity work
 - Agents should keep commits small and include validation output in their final report.
 - The current C++ bridge remains the compatibility reference until the Rust bridge is verified against Windows PowerToys.
 - The Electron GUI is parked. Do not invest more work in GUI packaging unless a task explicitly asks for it.
+- Route new Codex work through `./scripts/route-agent-task.sh "TASK"` so the cheapest suitable model is selected from `agent-workstreams/model-routing.md`.
+- Watch live local usage in the `mwb-agents:usage` tmux window.
 
 ## Owned Paths
 
