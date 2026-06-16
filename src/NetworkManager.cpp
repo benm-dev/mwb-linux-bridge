@@ -9,16 +9,22 @@
 #include <endian.h>
 #include <csignal>
 #include <execinfo.h>
+#include <algorithm>
+#include <cerrno>
+#include <cstdlib>
 
 #include <openssl/rand.h>
 
 namespace mwb {
 
+static bool FillRandom(void* data, int size);
+static bool WriteAll(int fd, const void* data, size_t size);
+
 static void handle_sig(int sig) {
     void *array[10];
     size_t size = backtrace(array, 10);
     fprintf(stderr, "FATAL: Signal %d caught. Backtrace:\n", sig);
-    backtrace_symbols_fd(array, size, STDERR_FILENO);
+    backtrace_symbols_fd(array, static_cast<int>(size), STDERR_FILENO);
     _exit(1);
 }
 
@@ -43,7 +49,7 @@ NetworkManager::~NetworkManager() {
 bool NetworkManager::Connect() {
     if (m_myName.empty()) { char hostname[256]; gethostname(hostname, 256); m_myName = hostname; }
     if (m_myId == 0) {
-        RAND_bytes(reinterpret_cast<uint8_t*>(&m_myId), 4);
+        if (!FillRandom(&m_myId, sizeof(m_myId))) return false;
         if (m_myId == 0) m_myId = 0xDEAD0001;
         printf("[IDENT] Permanent machine ID: %08x  name: %s\n", m_myId, m_myName.c_str());
         fflush(stdout);
@@ -51,7 +57,12 @@ bool NetworkManager::Connect() {
     m_running = true; // must be set before ServerListenerLoop thread starts
     // Start listening FIRST so Windows can connect back immediately after we reach it
     StartServerListener();
-    return ConnectOutbound();
+    if (!ConnectOutbound()) {
+        fprintf(stderr,
+                "[OUTBOUND] Initial connection failed. Continuing in listen mode; "
+                "configure Windows MWB to connect to this machine and the retry loop will keep trying outbound.\n");
+    }
+    return true;
 }
 
 bool NetworkManager::ConnectOutbound() {
@@ -74,7 +85,7 @@ bool NetworkManager::ConnectOutbound() {
     int flag = 1; setsockopt(m_socket, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(int));
 
     struct sockaddr_in s; std::memset(&s, 0, sizeof(s));
-    s.sin_family = AF_INET; s.sin_port = htons(m_port);
+    s.sin_family = AF_INET; s.sin_port = htons(static_cast<uint16_t>(m_port));
     if (inet_pton(AF_INET, m_host.c_str(), &s.sin_addr) <= 0) return false;
 
     printf("[OUTBOUND] Connecting to %s:%d...\n", m_host.c_str(), m_port);
@@ -89,15 +100,21 @@ bool NetworkManager::ConnectOutbound() {
 
     // Phase 1: IV Sync Noise
     std::vector<uint8_t> noise(16);
-    RAND_bytes(noise.data(), 16);
+    if (!FillRandom(noise.data(), static_cast<int>(noise.size()))) {
+        close(m_socket); m_socket = -1;
+        return false;
+    }
     std::vector<uint8_t> encNoise;
     if (!m_crypto.EncryptStream(noise, encNoise)) return false;
-    if (write(m_socket, encNoise.data(), 16) != 16) return false;
+    if (!WriteAll(m_socket, encNoise.data(), encNoise.size())) return false;
 
     // Phase 2: Type 126 Handshake
     MWBPacket pk; std::memset(&pk, 0, sizeof(pk));
     pk.type = 126;
-    RAND_bytes(pk.data, 48);
+    if (!FillRandom(pk.data, sizeof(pk.data))) {
+        close(m_socket); m_socket = -1;
+        return false;
+    }
     return SendPacket(pk, true);
 }
 
@@ -106,11 +123,40 @@ static bool IsBig(uint8_t t) {
     return (t & 128) == 128;
 }
 
+static bool FillRandom(void* data, int size) {
+    if (RAND_bytes(reinterpret_cast<unsigned char*>(data), size) != 1) {
+        fprintf(stderr, "ERR: OpenSSL RAND_bytes failed\n");
+        return false;
+    }
+    return true;
+}
+
+static bool WriteAll(int fd, const void* data, size_t size) {
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    size_t sent = 0;
+    while (sent < size) {
+        ssize_t n = write(fd, bytes + sent, size - sent);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return false;
+        }
+        if (n == 0) return false;
+        sent += static_cast<size_t>(n);
+    }
+    return true;
+}
+
+static int32_t normalizedFromPixel(int pixel, int span) {
+    if (span <= 1) return 0;
+    pixel = std::max(0, std::min(span - 1, pixel));
+    return static_cast<int32_t>((static_cast<int64_t>(pixel) * 65535) / (span - 1));
+}
+
 bool NetworkManager::SendPacket(MWBPacket& pkt, bool isBig) {
     std::lock_guard<std::mutex> lock(m_sendMutex);
     if (m_socket < 0) return false;
-    pkt.magic0 = (m_magic >> 16) & 0xFF;
-    pkt.magic1 = (m_magic >> 24) & 0xFF;
+    pkt.magic0 = static_cast<uint8_t>((m_magic >> 16) & 0xFF);
+    pkt.magic1 = static_cast<uint8_t>((m_magic >> 24) & 0xFF);
 
     uint32_t sId = htole32(m_sessionId), sSrc = htole32(m_srcId), sDes = htole32(m_desId);
     if (pkt.id == 0) std::memcpy(&pkt.id, &sId, 4);
@@ -132,7 +178,7 @@ bool NetworkManager::SendPacket(MWBPacket& pkt, bool isBig) {
     std::vector<uint8_t> plain(isBig ? 64 : 32), enc;
     std::memcpy(plain.data(), &pkt, plain.size());
     if (!m_crypto.EncryptStream(plain, enc)) return false;
-    return write(m_socket, enc.data(), enc.size()) == (ssize_t)enc.size();
+    return WriteAll(m_socket, enc.data(), enc.size());
 }
 
 // Send type 51 (Heartbeat_ex) with our machine name and screen dimensions.
@@ -172,7 +218,7 @@ void NetworkManager::RunLoop() {
     auto recvN = [&](uint8_t* b, int n) -> bool {
         int g = 0;
         while (g < n && m_running) {
-            int r = read(m_socket, b + g, n - g);
+            ssize_t r = read(m_socket, b + g, n - g);
             if (r < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
                 fprintf(stderr, "[OUTBOUND] recvN errno=%d\n", errno);
@@ -181,7 +227,7 @@ void NetworkManager::RunLoop() {
                 fprintf(stderr, "[OUTBOUND] recvN: socket closed gracefully\n");
                 return false;
             }
-            g += r;
+            g += static_cast<int>(r);
         }
         return m_running;
     };
@@ -201,10 +247,10 @@ void NetworkManager::RunLoop() {
         return true;
     };
 
-    bool firstRun = true;
+    bool firstRun = (m_socket >= 0);
 
     while (m_running) {
-        if (!firstRun) {
+        if (!firstRun || m_socket < 0) {
             printf("[RECONNECT] Waiting 5s before reconnect...\n");
             fflush(stdout);
             for (int i = 0; i < 50 && m_running; i++)
@@ -306,13 +352,13 @@ void NetworkManager::RunLoop() {
                 printf("\n");
                 MouseData m;
                 std::memcpy(&m, &p->data[0], sizeof(MouseData));
-                printf("[MOUSE] x=%d y=%d wParam=0x%04x mData=0x%08x\n", m.x, m.y, m.wParam, m.mouseData);
+                printf("[MOUSE] x=%d y=%d dwFlags=0x%04x wheel=%d\n", m.x, m.y, m.dwFlags, m.wheelDelta);
                 fflush(stdout);
                 if (m_onMouse) m_onMouse(m);
             } else if (t == 122) {
                 KeyboardData k;
                 std::memcpy(&k, &p->data[8], 8);
-                printf("[KEY] vk=0x%02x flags=0x%04x\n", k.vkCode, k.flags);
+                printf("[KEY] vk=0x%02x flags=0x%04x\n", k.wVk, k.dwFlags);
                 fflush(stdout);
                 if (m_onKeyboard) m_onKeyboard(k);
             } else if (t == 126) {
@@ -340,7 +386,7 @@ void NetworkManager::StartServerListener() {
     std::memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port = htons(m_port);
+    addr.sin_port = htons(static_cast<uint16_t>(m_port));
 
     if (bind(m_serverFd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("[SERVER] bind");
@@ -369,6 +415,12 @@ void NetworkManager::ServerListenerLoop() {
         }
         char ipbuf[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &caddr.sin_addr, ipbuf, sizeof(ipbuf));
+        if (m_host != ipbuf) {
+            printf("[SERVER] Rejected connection from unexpected host %s\n", ipbuf);
+            fflush(stdout);
+            close(cfd);
+            continue;
+        }
         printf("[SERVER] Accepted connection from %s\n", ipbuf);
         fflush(stdout);
 
@@ -381,15 +433,15 @@ void NetworkManager::HandleWindowsConnection(int fd) {
     CryptoHelper sc(m_key);
     uint32_t magic = sc.Get24BitHash();
 
-    auto sendRaw = [&](const void* buf, int n) -> bool {
-        return write(fd, buf, n) == n;
+    auto sendRaw = [&](const void* buf, size_t n) -> bool {
+        return WriteAll(fd, buf, n);
     };
     auto recvN = [&](uint8_t* b, int n) -> bool {
         int g = 0;
         while (g < n && m_running) {
-            int r = read(fd, b + g, n - g);
+            ssize_t r = read(fd, b + g, n - g);
             if (r <= 0) return false;
-            g += r;
+            g += static_cast<int>(r);
         }
         return m_running;
     };
@@ -401,7 +453,7 @@ void NetworkManager::HandleWindowsConnection(int fd) {
     sc.DecryptStream(wv, wd);  // advance decipher state
 
     std::vector<uint8_t> myNoise(16);
-    RAND_bytes(myNoise.data(), 16);
+    if (!FillRandom(myNoise.data(), static_cast<int>(myNoise.size()))) { close(fd); return; }
     std::vector<uint8_t> encNoise;
     sc.EncryptStream(myNoise, encNoise);
     if (!sendRaw(encNoise.data(), 16)) { close(fd); return; }
@@ -411,8 +463,8 @@ void NetworkManager::HandleWindowsConnection(int fd) {
 
     // Helper: send a big packet using sc
     auto sendPkt = [&](MWBPacket& pkt, bool isBig) -> bool {
-        pkt.magic0 = (magic >> 16) & 0xFF;
-        pkt.magic1 = (magic >> 24) & 0xFF;
+        pkt.magic0 = static_cast<uint8_t>((magic >> 16) & 0xFF);
+        pkt.magic1 = static_cast<uint8_t>((magic >> 24) & 0xFF);
         // fill src/des/id from what we know (they're already set by caller)
         pkt.checksum = 0;
         uint8_t cs = 0;
@@ -437,6 +489,9 @@ void NetworkManager::HandleWindowsConnection(int fd) {
 
     // Handshake: receive type 126 from Windows, respond with type 127
     int handshakePkts = 0;
+    int invalidHandshakePkts = 0;
+    uint32_t remoteMachineId = 0;
+    uint32_t sessionId = 0;
     bool trusted = false;
 
     for (int i = 0; i < 30 && m_running && !trusted; i++) {
@@ -456,13 +511,19 @@ void NetworkManager::HandleWindowsConnection(int fd) {
         }
 
         MWBPacket* p = reinterpret_cast<MWBPacket*>(full.data());
+        uint32_t sid = le32toh(p->id);
+        uint32_t ssrc = le32toh(p->src);
         uint32_t sdes = le32toh(p->des);
 
         printf("[SERVER-RECV] type=%d des=%08x\n", p->type, sdes);
         fflush(stdout);
 
+        if (sid != 0) sessionId = sid;
+        if (ssrc != 0) remoteMachineId = ssrc;
+
         if (p->type == 126) {
             handshakePkts++;
+            invalidHandshakePkts = 0;
 
             // Adopt the ID Windows has cached for us so pool["carbon"].Id == socket.MachineId
             if (sdes != 0 && sdes != 0xFF && sdes != 0xFFFFFFFF && m_myId != sdes) {
@@ -486,6 +547,12 @@ void NetworkManager::HandleWindowsConnection(int fd) {
             trusted = true;
             printf("[SERVER] Handshake complete. myId=%08x, handshakePkts=%d\n", m_myId, handshakePkts);
             fflush(stdout);
+        } else if (++invalidHandshakePkts >= 10) {
+            fprintf(stderr,
+                    "[SERVER] Received 10 invalid decrypted handshake packets. "
+                    "This usually means the security key does not match PowerToys "
+                    "or the displayed key was entered with spaces.\n");
+            break;
         }
     }
 
@@ -513,6 +580,44 @@ void NetworkManager::HandleWindowsConnection(int fd) {
     }
 
     // Main receive loop for this inbound connection
+    int cursorX = m_screenW / 2;
+    int cursorY = m_screenH / 2;
+    bool returnNotified = false;
+    bool rightAltDown = false;
+    auto lastReturnNotify = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+
+    auto sendNextMachine = [&](int requestedX, int requestedY) {
+        if (remoteMachineId == 0) {
+            printf("[SERVER-SWITCH] Cannot switch back: Windows machine ID is not known yet\n");
+            fflush(stdout);
+            return;
+        }
+
+        MWBPacket next;
+        std::memset(&next, 0, sizeof(next));
+        next.type = static_cast<uint8_t>(PackageType::NextMachine);
+
+        uint32_t sid = htole32(sessionId);
+        uint32_t src = htole32(m_myId);
+        uint32_t des = htole32(remoteMachineId);
+        std::memcpy(&next.id, &sid, 4);
+        std::memcpy(&next.src, &src, 4);
+        std::memcpy(&next.des, &des, 4);
+
+        int32_t x = htole32(requestedX);
+        int32_t y = htole32(requestedY);
+        int32_t target = htole32(static_cast<int32_t>(remoteMachineId));
+        std::memcpy(&next.data[0], &x, 4);
+        std::memcpy(&next.data[4], &y, 4);
+        std::memcpy(&next.data[8], &target, 4);
+
+        if (sendPkt(next, false)) {
+            printf("[SERVER-SWITCH] Sent NextMachine back to Windows id=%08x requested=(%d,%d)\n",
+                   remoteMachineId, requestedX, requestedY);
+            fflush(stdout);
+        }
+    };
+
     while (m_running) {
         uint8_t b1[32];
         if (!recvN(b1, 32)) break;
@@ -531,18 +636,70 @@ void NetworkManager::HandleWindowsConnection(int fd) {
 
         MWBPacket* p = reinterpret_cast<MWBPacket*>(full.data());
         uint8_t t = p->type;
+        uint32_t sid = le32toh(p->id);
+        uint32_t ssrc = le32toh(p->src);
+        if (sid != 0) sessionId = sid;
+        if (ssrc != 0) remoteMachineId = ssrc;
 
         if (t == 123) {
             MouseData m;
             std::memcpy(&m, &p->data[0], sizeof(MouseData));
-            printf("[SERVER-MOUSE] x=%d y=%d wParam=0x%04x\n", m.x, m.y, m.wParam);
+            printf("[SERVER-MOUSE] x=%d y=%d dwFlags=0x%04x wheel=%d\n", m.x, m.y, m.dwFlags, m.wheelDelta);
             fflush(stdout);
             if (m_onMouse) m_onMouse(m);
+
+            const bool move = m.dwFlags == 0x0200;
+            if (std::abs(m.x) >= 100000 && std::abs(m.y) >= 100000) {
+                if (move) {
+                    int dx = m.x < 0 ? m.x + 100000 : m.x - 100000;
+                    int dy = m.y < 0 ? m.y + 100000 : m.y - 100000;
+                    cursorX = std::max(0, std::min(m_screenW - 1, cursorX + dx));
+                    cursorY = std::max(0, std::min(m_screenH - 1, cursorY + dy));
+                }
+            } else {
+                cursorX = static_cast<int>((static_cast<int64_t>(m.x) * (m_screenW - 1)) / 65535);
+                cursorY = static_cast<int>((static_cast<int64_t>(m.y) * (m_screenH - 1)) / 65535);
+                cursorX = std::max(0, std::min(m_screenW - 1, cursorX));
+                cursorY = std::max(0, std::min(m_screenH - 1, cursorY));
+            }
+
+            const int edgePx = 2;
+            const bool atLeft = cursorX <= edgePx;
+            const bool atRight = cursorX >= m_screenW - 1 - edgePx;
+            const bool awayFromHorizontalEdge = cursorX > edgePx * 8 && cursorX < m_screenW - 1 - (edgePx * 8);
+            if (awayFromHorizontalEdge) {
+                returnNotified = false;
+            }
+
+            auto now = std::chrono::steady_clock::now();
+            if (move && !returnNotified && (atLeft || atRight) &&
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - lastReturnNotify).count() > 500) {
+                int requestX = atLeft ? 65000 : 535;
+                int requestY = normalizedFromPixel(cursorY, m_screenH);
+                sendNextMachine(requestX, requestY);
+                returnNotified = true;
+                lastReturnNotify = now;
+            }
         } else if (t == 122) {
             KeyboardData k;
             std::memcpy(&k, &p->data[8], 8);
-            printf("[SERVER-KEY] vk=0x%02x flags=0x%04x\n", k.vkCode, k.flags);
+            printf("[SERVER-KEY] vk=0x%02x flags=0x%04x\n", k.wVk, k.dwFlags);
             fflush(stdout);
+            const bool keyUp = (k.dwFlags & 0x80) != 0;
+            if (k.wVk == 0xA5) { // VK_RMENU / Right Alt: reserved switch modifier.
+                rightAltDown = !keyUp;
+                continue;
+            }
+            if (rightAltDown && (k.wVk == 0xBC || k.wVk == 0xE2)) {
+                // VK_OEM_COMMA is '<' on US layouts with Shift.
+                // VK_OEM_102 is the dedicated '< >' ISO keyboard key.
+                if (!keyUp) {
+                    printf("[SERVER-SWITCH] Right Alt + < pressed; requesting switch back to Windows\n");
+                    fflush(stdout);
+                    sendNextMachine(32767, 32767);
+                }
+                continue;
+            }
             if (m_onKeyboard) m_onKeyboard(k);
         } else if (t == 126) {
             // Re-handshake request

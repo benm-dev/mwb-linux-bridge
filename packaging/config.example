@@ -1,0 +1,11 @@
+# MWB Linux Bridge config
+# Copy to ~/.config/mwb-linux-bridge/config and edit.
+
+windows_ip=192.168.1.10
+port=15101
+
+# Optional. Store only the key in this file and protect it:
+#   mkdir -p ~/.config/mwb-linux-bridge
+#   chmod 700 ~/.config/mwb-linux-bridge
+#   chmod 600 ~/.config/mwb-linux-bridge/key
+# security_key_file=~/.config/mwb-linux-bridge/key

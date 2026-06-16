@@ -6,8 +6,42 @@
 #include <cstring>
 #include <linux/uinput.h>
 #include <unordered_map>
+#include <cstdlib>
+#include <cerrno>
 
 namespace mwb {
+
+namespace {
+constexpr int kMoveMouseRelative = 100000;
+constexpr int kWmMouseMove = 0x0200;
+constexpr int kWmLButtonDown = 0x0201;
+constexpr int kWmLButtonUp = 0x0202;
+constexpr int kWmLButtonDblClk = 0x0203;
+constexpr int kWmRButtonDown = 0x0204;
+constexpr int kWmRButtonUp = 0x0205;
+constexpr int kWmRButtonDblClk = 0x0206;
+constexpr int kWmMButtonDown = 0x0207;
+constexpr int kWmMButtonUp = 0x0208;
+constexpr int kWmMButtonDblClk = 0x0209;
+constexpr int kWmMouseWheel = 0x020A;
+constexpr int kWmMouseHWheel = 0x020E;
+constexpr int kLlkHfUp = 0x80;
+
+bool WriteAll(int fd, const void* data, size_t size) {
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    size_t sent = 0;
+    while (sent < size) {
+        ssize_t n = write(fd, bytes + sent, size - sent);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return false;
+        }
+        if (n == 0) return false;
+        sent += static_cast<size_t>(n);
+    }
+    return true;
+}
+}
 
 static std::unordered_map<uint16_t, uint16_t> s_vkToKey = {
     {0x41, 30}, {0x42, 48}, {0x43, 46}, {0x44, 32}, {0x45, 18}, {0x46, 33},
@@ -55,13 +89,20 @@ bool InputManager::Initialize() {
     ioctl(m_fd, UI_SET_RELBIT, REL_X);
     ioctl(m_fd, UI_SET_RELBIT, REL_Y);
     ioctl(m_fd, UI_SET_RELBIT, REL_WHEEL);
+    ioctl(m_fd, UI_SET_RELBIT, REL_HWHEEL);
+#ifdef REL_WHEEL_HI_RES
+    ioctl(m_fd, UI_SET_RELBIT, REL_WHEEL_HI_RES);
+#endif
+#ifdef REL_HWHEEL_HI_RES
+    ioctl(m_fd, UI_SET_RELBIT, REL_HWHEEL_HI_RES);
+#endif
 
     ioctl(m_fd, UI_SET_ABSBIT, ABS_X);
     ioctl(m_fd, UI_SET_ABSBIT, ABS_Y);
 
     struct uinput_user_dev uidev;
     memset(&uidev, 0, sizeof(uidev));
-    strcpy(uidev.name, "Mouse Without Borders Virtual Client");
+    strncpy(uidev.name, "MWB Linux Bridge Virtual Client", sizeof(uidev.name) - 1);
     uidev.id.bustype = BUS_USB;
     uidev.id.vendor  = 0x045E;
     uidev.id.product = 0x0001;
@@ -79,7 +120,7 @@ bool InputManager::Initialize() {
     ioctl(m_fd, UI_SET_KEYBIT, BTN_RIGHT);
     ioctl(m_fd, UI_SET_KEYBIT, BTN_MIDDLE);
 
-    if (write(m_fd, &uidev, sizeof(uidev)) < 0) {
+    if (!WriteAll(m_fd, &uidev, sizeof(uidev))) {
         std::cerr << "ERR: Failed to write uinput dev setup." << std::endl;
         return false;
     }
@@ -92,11 +133,21 @@ bool InputManager::Initialize() {
     return true;
 }
 
+void InputManager::SetScreenSize(int width, int height) {
+    if (width > 0 && height > 0) {
+        m_screenW = width;
+        m_screenH = height;
+    }
+}
+
 void InputManager::WarpCursor(int px, int py) {
     // Warp cursor to pixel position (px, py) using two-step REL injection.
     // ABS events are ignored by libinput for INPUT_PROP_POINTER devices, so we
     // use REL: first snap to (0,0) with a very large negative delta, then
     // apply the target offset. The compositor clamps REL movement at screen bounds.
+    px = std::max(0, std::min(m_screenW - 1, px));
+    py = std::max(0, std::min(m_screenH - 1, py));
+
     const int LARGE = 100000;
     struct input_event ev[4];
 
@@ -105,14 +156,20 @@ void InputManager::WarpCursor(int px, int py) {
     ev[0].type = EV_REL; ev[0].code = REL_X; ev[0].value = -LARGE;
     ev[1].type = EV_REL; ev[1].code = REL_Y; ev[1].value = -LARGE;
     ev[2].type = EV_SYN; ev[2].code = SYN_REPORT;
-    write(m_fd, ev, sizeof(struct input_event) * 3);
+    if (!WriteAll(m_fd, ev, sizeof(struct input_event) * 3)) {
+        std::cerr << "ERR: Failed to inject cursor snap event." << std::endl;
+        return;
+    }
 
     // Step 2: move to target (px, py) from (0, 0)
     memset(ev, 0, sizeof(ev));
     ev[0].type = EV_REL; ev[0].code = REL_X; ev[0].value = px;
     ev[1].type = EV_REL; ev[1].code = REL_Y; ev[1].value = py;
     ev[2].type = EV_SYN; ev[2].code = SYN_REPORT;
-    write(m_fd, ev, sizeof(struct input_event) * 3);
+    if (!WriteAll(m_fd, ev, sizeof(struct input_event) * 3)) {
+        std::cerr << "ERR: Failed to inject cursor warp event." << std::endl;
+        return;
+    }
 
     printf("[WARP] Cursor snapped to pixel (%d, %d)\n", px, py);
     fflush(stdout);
@@ -121,82 +178,74 @@ void InputManager::WarpCursor(int px, int py) {
 void InputManager::InjectMouse(const MouseData& data) {
     if (m_fd < 0) return;
 
-    // Wire format (from real server observation):
-    //   data.x     = absolute x (0-65535 across virtual desktop)
-    //   data.flags = movement flags (usually 0; standard MOUSEEVENTF bits when buttons pressed)
-    //   data.y     = absolute y (0-65535 across virtual desktop)
-    //   data.wheel = scroll delta
-    //
-    // Coordinates span the VIRTUAL DESKTOP (all monitors combined).
-    // Both screens 1920-wide: 0-32767=Windows (or Carbon), 32768-65535=Carbon (or Windows).
-    // We scale the full range to our screen and track deltas.
-
-    const int SCREEN_W = 1920;
-    const int SCREEN_H = 1080;
-
-    // Reset tracking if cursor has been away for >500ms (returned from Windows)
-    auto now = std::chrono::steady_clock::now();
-    if (m_lastAbsX >= 0) {
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastMouseTime).count();
-        if (ms > 500) m_lastAbsX = -1;
-    }
-    m_lastMouseTime = now;
-
-    struct input_event ev[12];
+    struct input_event ev[16];
     memset(ev, 0, sizeof(ev));
     int count = 0;
+    auto addWheel = [&](int relCode, int hiResCode, int delta, int& remainder) {
+        if (delta == 0) return;
+#if defined(REL_WHEEL_HI_RES) || defined(REL_HWHEEL_HI_RES)
+        if (hiResCode >= 0) {
+            ev[count].type = EV_REL;
+            ev[count].code = static_cast<uint16_t>(hiResCode);
+            ev[count].value = delta;
+            count++;
+        }
+#endif
+        remainder += delta;
+        int detents = remainder / 120;
+        remainder %= 120;
+        if (detents != 0) {
+            ev[count].type = EV_REL;
+            ev[count].code = static_cast<uint16_t>(relCode);
+            ev[count].value = detents;
+            count++;
+        }
+    };
 
-    if (m_lastAbsX < 0) {
-        // First packet after crossing — warp to the correct entry edge pixel position.
-        // x < 32768: Carbon is left of Windows, so cursor entered from the right edge.
-        // x >= 32768: Carbon is right of Windows, cursor entered from the left edge.
-        int entryX = (data.x < 32768) ? (SCREEN_W - 1) : 0;
-        int entryY = (static_cast<int>(data.y) * SCREEN_H) / 65535;
-        entryY = std::max(0, std::min(SCREEN_H - 1, entryY));
-        WarpCursor(entryX, entryY);
-        m_lastAbsX = static_cast<int>(data.x);
-        m_lastAbsY = static_cast<int>(data.y);
+    if (std::abs(data.x) >= kMoveMouseRelative && std::abs(data.y) >= kMoveMouseRelative) {
+        if (data.dwFlags == kWmMouseMove) {
+            int dx = data.x < 0 ? data.x + kMoveMouseRelative : data.x - kMoveMouseRelative;
+            int dy = data.y < 0 ? data.y + kMoveMouseRelative : data.y - kMoveMouseRelative;
+            if (dx != 0) { ev[count].type = EV_REL; ev[count].code = REL_X; ev[count].value = dx; count++; }
+            if (dy != 0) { ev[count].type = EV_REL; ev[count].code = REL_Y; ev[count].value = dy; count++; }
+        }
     } else {
-        // Subsequent packets — use relative deltas in the raw 0-65535 space,
-        // then scale to screen pixels for injection.
-        int rawDx = static_cast<int>(data.x) - m_lastAbsX;
-        int rawDy = static_cast<int>(data.y) - m_lastAbsY;
-
-        int dx = (rawDx * SCREEN_W) / 65535;
-        int dy = (rawDy * SCREEN_H) / 65535;
-
-        if (dx != 0) { ev[count].type = EV_REL; ev[count].code = REL_X; ev[count].value = dx; count++; }
-        if (dy != 0) { ev[count].type = EV_REL; ev[count].code = REL_Y; ev[count].value = dy; count++; }
-
-        m_lastAbsX = static_cast<int>(data.x);
-        m_lastAbsY = static_cast<int>(data.y);
+        int px = static_cast<int>((static_cast<int64_t>(data.x) * (m_screenW - 1)) / 65535);
+        int py = static_cast<int>((static_cast<int64_t>(data.y) * (m_screenH - 1)) / 65535);
+        WarpCursor(px, py);
     }
 
-    // Button and wheel events via WM_* message code in wParam.
-    switch (data.wParam) {
-        case 0x0201: case 0x0203: // WM_LBUTTONDOWN / WM_LBUTTONDBLCLK
+    // Button and wheel events via WM_* message code in dwFlags.
+    switch (data.dwFlags) {
+        case kWmLButtonDown: case kWmLButtonDblClk:
             ev[count].type = EV_KEY; ev[count].code = BTN_LEFT;   ev[count].value = 1; count++; break;
-        case 0x0202:              // WM_LBUTTONUP
+        case kWmLButtonUp:
             ev[count].type = EV_KEY; ev[count].code = BTN_LEFT;   ev[count].value = 0; count++; break;
-        case 0x0204: case 0x0206: // WM_RBUTTONDOWN / WM_RBUTTONDBLCLK
+        case kWmRButtonDown: case kWmRButtonDblClk:
             ev[count].type = EV_KEY; ev[count].code = BTN_RIGHT;  ev[count].value = 1; count++; break;
-        case 0x0205:              // WM_RBUTTONUP
+        case kWmRButtonUp:
             ev[count].type = EV_KEY; ev[count].code = BTN_RIGHT;  ev[count].value = 0; count++; break;
-        case 0x0207: case 0x0209: // WM_MBUTTONDOWN / WM_MBUTTONDBLCLK
+        case kWmMButtonDown: case kWmMButtonDblClk:
             ev[count].type = EV_KEY; ev[count].code = BTN_MIDDLE; ev[count].value = 1; count++; break;
-        case 0x0208:              // WM_MBUTTONUP
+        case kWmMButtonUp:
             ev[count].type = EV_KEY; ev[count].code = BTN_MIDDLE; ev[count].value = 0; count++; break;
-        case 0x020A: {            // WM_MOUSEWHEEL
-            int16_t delta = static_cast<int16_t>((data.mouseData >> 16) & 0xFFFF);
-            if (delta != 0) { ev[count].type = EV_REL; ev[count].code = REL_WHEEL; ev[count].value = delta / 120; count++; }
+        case kWmMouseWheel: {
+#ifdef REL_WHEEL_HI_RES
+            addWheel(REL_WHEEL, REL_WHEEL_HI_RES, data.wheelDelta, m_wheelRemainder);
+#else
+            addWheel(REL_WHEEL, -1, data.wheelDelta, m_wheelRemainder);
+#endif
             break;
         }
-        case 0x020E: {            // WM_MOUSEHWHEEL
-            int16_t delta = static_cast<int16_t>((data.mouseData >> 16) & 0xFFFF);
-            if (delta != 0) { ev[count].type = EV_REL; ev[count].code = REL_HWHEEL; ev[count].value = delta / 120; count++; }
+        case kWmMouseHWheel: {
+#ifdef REL_HWHEEL_HI_RES
+            addWheel(REL_HWHEEL, REL_HWHEEL_HI_RES, data.wheelDelta, m_hwheelRemainder);
+#else
+            addWheel(REL_HWHEEL, -1, data.wheelDelta, m_hwheelRemainder);
+#endif
             break;
         }
-        default: break;           // WM_MOUSEMOVE (0x0200) and unknowns: movement only
+        default: break;
     }
 
     if (count > 0) {
@@ -204,7 +253,9 @@ void InputManager::InjectMouse(const MouseData& data) {
         ev[count].code = SYN_REPORT;
         ev[count].value = 0;
         count++;
-        write(m_fd, ev, sizeof(struct input_event) * count);
+        if (!WriteAll(m_fd, ev, sizeof(struct input_event) * static_cast<size_t>(count))) {
+            std::cerr << "ERR: Failed to inject mouse event." << std::endl;
+        }
     }
 }
 
@@ -212,11 +263,11 @@ void InputManager::InjectKeyboard(const KeyboardData& data) {
     if (m_fd < 0) return;
 
     uint16_t key = 0;
-    auto it = s_vkToKey.find(data.vkCode);
+    auto it = s_vkToKey.find(static_cast<uint16_t>(data.wVk));
     if (it != s_vkToKey.end()) {
         key = it->second;
     } else {
-        std::cout << "[VERBOSE] Unmapped Key: VK_0x" << std::hex << data.vkCode << std::dec << std::endl;
+        std::cout << "[VERBOSE] Unmapped Key: VK_0x" << std::hex << data.wVk << std::dec << std::endl;
         return;
     }
 
@@ -224,13 +275,15 @@ void InputManager::InjectKeyboard(const KeyboardData& data) {
     memset(ev, 0, sizeof(ev));
     ev[0].type = EV_KEY;
     ev[0].code = key;
-    ev[0].value = (data.flags & 0x0002 /*KEYEVENTF_KEYUP*/) ? 0 : 1;
+    ev[0].value = (data.dwFlags & kLlkHfUp) ? 0 : 1;
 
     ev[1].type = EV_SYN;
     ev[1].code = SYN_REPORT;
     ev[1].value = 0;
 
-    write(m_fd, &ev, sizeof(ev));
+    if (!WriteAll(m_fd, &ev, sizeof(ev))) {
+        std::cerr << "ERR: Failed to inject keyboard event." << std::endl;
+    }
 }
 
 }

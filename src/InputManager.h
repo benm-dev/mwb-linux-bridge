@@ -1,6 +1,5 @@
 #pragma once
 #include "Protocol.h"
-#include <chrono>
 
 namespace mwb {
 
@@ -18,14 +17,17 @@ public:
     // Translates Virtual Key Codes to EV_KEY definitions
     void InjectKeyboard(const KeyboardData& data);
 
-    // Warps cursor to absolute pixel position via EV_ABS
+    // Warps cursor to an absolute pixel position using relative uinput events.
     void WarpCursor(int px, int py);
+
+    void SetScreenSize(int width, int height);
 
 private:
     int m_fd;
-    int m_lastAbsX{-1};
-    int m_lastAbsY{-1};
-    std::chrono::steady_clock::time_point m_lastMouseTime;
+    int m_screenW{1920};
+    int m_screenH{1080};
+    int m_wheelRemainder{0};
+    int m_hwheelRemainder{0};
 };
 
 }

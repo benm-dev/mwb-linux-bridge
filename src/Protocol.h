@@ -13,6 +13,7 @@ enum class PackageType : uint8_t {
     Heartbeat_ex = 51,
     Clipboard = 69,
     ClipboardPush = 79,
+    NextMachine = 121,
     Keyboard = 122,
     Mouse = 123,
     ClipboardText = 124,
@@ -56,28 +57,29 @@ struct MWBPacket {
     uint8_t data[48];     // Offset 16 onwards
 };
 
-// 16-byte mouse structure at Offset 16 (overlaps Machine1..4 in the DATA union).
-// Derived from MSLLHOOKSTRUCT captured by the Windows low-level mouse hook:
-//   data[0..3]  = x       (int32, normalized 0-65535 across virtual desktop)
-//   data[4..7]  = y       (int32, normalized 0-65535 across virtual desktop)
-//   data[8..11] = mouseData (uint32, HIWORD = wheel delta for WM_MOUSEWHEEL)
-//   data[12..15]= wParam  (uint32, WM_* message code:
+// 16-byte mouse structure at packet offset 16 / data[0].
+// Matches PowerToys Core/MOUSEDATA.cs:
+//   data[0..3]   = X          (int32)
+//   data[4..7]   = Y          (int32)
+//   data[8..11]  = WheelDelta (int32, usually +/-120 for wheel events)
+//   data[12..15] = dwFlags    (int32, WM_* message code:
 //                          0x0200=MOUSEMOVE, 0x0201=LBUTTONDOWN, 0x0202=LBUTTONUP,
 //                          0x0204=RBUTTONDOWN, 0x0205=RBUTTONUP,
 //                          0x0207=MBUTTONDOWN, 0x0208=MBUTTONUP,
 //                          0x020A=MOUSEWHEEL, 0x020E=MOUSEHWHEEL)
 struct MouseData {
-    int32_t  x;           // data[0..3]
-    int32_t  y;           // data[4..7]
-    uint32_t mouseData;   // data[8..11]  — HIWORD is wheel delta (±120/notch)
-    uint32_t wParam;      // data[12..15] — WM_* mouse message code
+    int32_t x;            // data[0..3]
+    int32_t y;            // data[4..7]
+    int32_t wheelDelta;   // data[8..11]
+    int32_t dwFlags;      // data[12..15]
 };
 
-// Compact 8-byte keyboard structure at Offset 24
+// 8-byte keyboard structure at packet offset 24 / data[8].
+// Matches PowerToys Core/KEYBDDATA.cs. dwFlags is the low-level keyboard-hook
+// flags field; key release is LLKHF_UP (0x80), not KEYEVENTF_KEYUP.
 struct KeyboardData {
-    uint16_t vkCode;      // data[8..9]
-    uint16_t scanCode;    // data[10..11]
-    uint32_t flags;       // data[12..15]
+    int32_t wVk;          // data[8..11]
+    int32_t dwFlags;      // data[12..15]
 };
 
 #pragma pack(pop)

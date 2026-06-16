@@ -1,4 +1,4 @@
-# mwb-client-linux
+# MWB Linux Bridge
 
 ![Status: Early Development](https://img.shields.io/badge/status-early%20development-red)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
@@ -7,7 +7,7 @@
 >
 > This project is in early, active development. Core functionality (connection, cursor movement, keyboard input) works in testing but there are known issues and many rough edges. Cursor crossing from Windows to Linux is not yet reliably working. Use at your own risk and expect things to break. Contributions and bug reports are very welcome.
 
-A native C++17 client that connects a Linux machine to a Windows machine running [Microsoft PowerToys "Mouse Without Borders"](https://learn.microsoft.com/en-us/windows/powertoys/mouse-without-borders), enabling seamless cursor and keyboard sharing between the two systems.
+A native C++17 Linux bridge for [Microsoft PowerToys "Mouse Without Borders"](https://learn.microsoft.com/en-us/windows/powertoys/mouse-without-borders), enabling cursor and keyboard sharing between Windows and Linux systems.
 
 Works on both X11 and Wayland via Linux's `uinput` kernel interface.
 
@@ -22,9 +22,14 @@ Works on both X11 and Wayland via Linux's `uinput` kernel interface.
 ## Project Structure
 
 ```
-mwb-client-linux/
+mwb-linux-bridge/
 ├── CMakeLists.txt
 ├── Dockerfile
+├── packaging/
+│   ├── 90-mwb-client-uinput.rules
+│   ├── config.example
+│   ├── README.Fedora.md
+│   └── mwb-linux-bridge.spec
 ├── README.md
 └── src/
     ├── main.cpp
@@ -40,7 +45,7 @@ mwb-client-linux/
 ### Prerequisites (Ubuntu / Debian)
 
 ```bash
-sudo apt-get install -y build-essential cmake pkg-config libssl-dev libevdev-dev
+sudo apt-get install -y build-essential cmake libssl-dev
 ```
 
 ### Compile
@@ -64,18 +69,45 @@ Log out and back in for group membership to take effect.
 ## Usage
 
 ```
-./build/mwb_client <WINDOWS_IP> <SECURITY_KEY> [PORT]
+./build/mwb_client [--config PATH] [--host WINDOWS_IP] [--port PORT]
+./build/mwb_client <WINDOWS_IP> [PORT]
 ```
 
 - `WINDOWS_IP` — IP address of the Windows machine running PowerToys MWB
-- `SECURITY_KEY` — The security key shown in **PowerToys → Mouse Without Borders → Security key**
 - `PORT` — Optional, defaults to `15101` (keyboard/mouse channel). Do **not** use `15100` (clipboard only).
+- Security key — enter the key shown in **PowerToys → Mouse Without Borders → Security key** at the hidden prompt, or set `MWB_SECURITY_KEY`.
 
 Example:
 
 ```bash
-./build/mwb_client 192.168.1.10 MySecurityKey123
+./build/mwb_client 192.168.1.10
 ```
+
+Do not pass the security key as a command-line argument. Command-line secrets can be exposed through shell history and process listings.
+
+### Config file
+
+Create the default config:
+
+```bash
+./build/mwb_client --init-config
+```
+
+Then edit `~/.config/mwb-linux-bridge/config`:
+
+```ini
+windows_ip=192.168.1.10
+port=15101
+# security_key_file=~/.config/mwb-linux-bridge/key
+```
+
+After that, run:
+
+```bash
+./build/mwb_client
+```
+
+Supported config keys are `windows_ip`, `host`, `port`, and `security_key_file`. If `security_key_file` is omitted, the client prompts for the key.
 
 ### Setup in PowerToys
 
@@ -88,9 +120,32 @@ Example:
 ## Docker
 
 ```bash
-docker build -t mwb-linux .
-docker run --rm -it --device /dev/uinput:/dev/uinput mwb-linux \
-    <WINDOWS_IP> <SECURITY_KEY>
+docker build -t mwb-linux-bridge .
+docker run --rm -it --device /dev/uinput:/dev/uinput mwb-linux-bridge \
+    <WINDOWS_IP>
+```
+
+## Fedora RPM
+
+This repository includes a local RPM spec under `packaging/`. The package installs `/usr/bin/mwb-client` and a udev rule for active-session `/dev/uinput` access.
+
+Build locally:
+
+```bash
+rpmbuild --define "_topdir /tmp/mwb-rpmbuild" -ba /tmp/mwb-rpmbuild/SPECS/mwb-linux-bridge.spec
+```
+
+After installing the RPM, run:
+
+```bash
+mwb-client 192.168.1.10
+```
+
+Or create and use the default config:
+
+```bash
+mwb-client --init-config
+mwb-client
 ```
 
 ## Protocol Notes
@@ -110,9 +165,10 @@ The machine name sent by this client must match the name configured in Windows's
 
 ## Known Limitations
 
-- Screen dimensions for coordinate scaling are currently hardcoded to 1920×1080 in `InputManager.cpp`. The actual screen size is queried via `xrandr` at startup and used for the identity broadcast, but the injection path will need updating for non-1080p screens.
+- Screen dimensions are queried with `xrandr` at startup. If that fails, input injection falls back to 1920x1080.
 - Clipboard sync is not implemented.
 - Wayland cursor warping uses a REL snap-to-corner trick; absolute positioning via `EV_ABS` is ignored by most compositors for `INPUT_PROP_POINTER` devices.
+- Security is constrained by the PowerToys compatibility protocol: AES-256-CBC has no per-message authentication tag and uses a fixed compatibility IV. Run this only on trusted LANs/VPNs.
 
 ## License
 
