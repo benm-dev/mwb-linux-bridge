@@ -18,6 +18,7 @@ Works on both X11 and Wayland via Linux's `uinput` kernel interface.
 - Automatic reconnect on network drop
 - Bidirectional TCP connection (connects out to Windows and accepts Windows's inbound connection)
 - AES-256-CBC encrypted protocol matching PowerToys MWB exactly
+- Dependency-light terminal UI for setup, status checks, key storage, and launching
 
 ## Project Structure
 
@@ -38,13 +39,14 @@ mwb-linux-bridge/
 │   ├── README.Fedora.md
 │   └── mwb-linux-bridge.spec
 ├── README.md
-└── src/
-    ├── main.cpp
-    ├── Protocol.h
-    ├── CryptoHelper.h / .cpp
-    ├── InputManager.h / .cpp
-    ├── NetworkManager.h / .cpp
-    └── (no generated files — clean build tree)
+├── src/
+│   ├── main.cpp
+│   ├── Protocol.h
+│   ├── CryptoHelper.h / .cpp
+│   ├── InputManager.h / .cpp
+│   └── NetworkManager.h / .cpp
+└── tui/
+    └── mwb-tui
 ```
 
 ## Build
@@ -63,6 +65,12 @@ cmake ..
 make -j$(nproc)
 ```
 
+Install locally:
+
+```bash
+sudo cmake --install build
+```
+
 ### uinput permissions (non-root)
 
 ```bash
@@ -73,9 +81,35 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 Log out and back in for group membership to take effect.
 
-## Universal Linux Install (Flatpak)
+## Terminal UI (recommended)
 
-Flatpak is the preferred universal Linux packaging target for the GUI. It bundles the Electron frontend and the native `mwb-client` bridge binary into one installable bundle.
+`mwb-tui` is the recommended setup path while the desktop GUI is parked. It uses the same config file as `mwb-client` and works in any normal terminal or over SSH.
+
+From a source checkout:
+
+```bash
+./tui/mwb-tui
+./tui/mwb-tui --status
+```
+
+After installing:
+
+```bash
+mwb-tui
+mwb-tui --status
+```
+
+The TUI can:
+
+- configure the Windows IP/host and port
+- save the PowerToys security key to `~/.config/mwb-linux-bridge/key` with private permissions, or leave the client in prompt mode
+- check `/dev/uinput`, the selected client binary, session type, route to Windows, and TCP port reachability
+- install the uinput udev rule on request
+- start `mwb-client` with the saved config
+
+## Experimental Flatpak GUI (parked)
+
+Flatpak support is kept for the Electron GUI, but the current recommended path is the native client plus `mwb-tui`. The Flatpak bundles the Electron frontend and the native `mwb-client` bridge binary into one installable bundle.
 
 Install build tools:
 
@@ -143,9 +177,11 @@ After that, run:
 
 Supported config keys are `windows_ip`, `host`, `port`, and `security_key_file`. If `security_key_file` is omitted, the client prompts for the key.
 
-## Electron GUI
+## Electron GUI (parked)
 
-The Electron GUI is a Linux desktop frontend for the same `mwb-client` binary and config file. It uses standard Electron windows, no tray-only workflow, no global shortcuts, and no compositor-specific APIs, so it can run under common desktop environments and window managers on X11 or Wayland.
+The Electron GUI is parked while the terminal UI is the recommended workflow. The code remains under `gui/` for later work.
+
+The GUI is a Linux desktop frontend for the same `mwb-client` binary and config file. It uses standard Electron windows, no tray-only workflow, no global shortcuts, and no compositor-specific APIs, so it can run under common desktop environments and window managers on X11 or Wayland.
 
 Run in development:
 
@@ -193,7 +229,7 @@ docker run --rm -it --device /dev/uinput:/dev/uinput mwb-linux-bridge \
 
 ## Fedora RPM
 
-This repository includes a local RPM spec under `packaging/`. The package installs `/usr/bin/mwb-client` and a udev rule for active-session `/dev/uinput` access.
+This repository includes a local RPM spec under `packaging/`. The package installs `/usr/bin/mwb-client`, `/usr/bin/mwb-tui`, and a udev rule for active-session `/dev/uinput` access.
 
 Build locally:
 
@@ -204,14 +240,13 @@ rpmbuild --define "_topdir /tmp/mwb-rpmbuild" -ba /tmp/mwb-rpmbuild/SPECS/mwb-li
 After installing the RPM, run:
 
 ```bash
-mwb-client 192.168.1.10
+mwb-tui
 ```
 
-Or create and use the default config:
+Or run the client directly:
 
 ```bash
-mwb-client --init-config
-mwb-client
+mwb-client 192.168.1.10
 ```
 
 To build the Fedora-native GUI RPM, run:

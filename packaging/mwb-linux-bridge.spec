@@ -10,6 +10,8 @@ Source0:        %{name}-%{version}.tar.gz
 BuildRequires:  gcc-c++
 BuildRequires:  openssl-devel
 Requires:       openssl-libs
+Requires:       bash
+Requires:       iproute
 
 %description
 Native C++17 Linux bridge for interoperating with Microsoft PowerToys
@@ -31,6 +33,7 @@ mkdir -p build
 
 %install
 install -Dpm 0755 build/mwb_client %{buildroot}%{_bindir}/mwb-client
+install -Dpm 0755 tui/mwb-tui %{buildroot}%{_bindir}/mwb-tui
 install -Dpm 0644 packaging/90-mwb-client-uinput.rules %{buildroot}/usr/lib/udev/rules.d/90-mwb-client-uinput.rules
 
 %post
@@ -44,6 +47,7 @@ fi
 %doc packaging/README.Fedora.md
 %doc packaging/config.example
 %{_bindir}/mwb-client
+%{_bindir}/mwb-tui
 /usr/lib/udev/rules.d/90-mwb-client-uinput.rules
 
 %changelog

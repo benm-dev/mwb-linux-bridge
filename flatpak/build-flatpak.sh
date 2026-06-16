@@ -21,9 +21,11 @@ EOF
     exit 1
 fi
 
-if ! flatpak remotes | awk '{print $1}' | grep -qx flathub; then
+if ! flatpak --user remotes --columns=name | grep -qx flathub; then
     flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 fi
+
+cd "${repo_root}"
 
 npm --prefix "${repo_root}/gui" ci
 npm --prefix "${repo_root}/gui" run dist:dir

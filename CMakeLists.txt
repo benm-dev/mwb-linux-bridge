@@ -35,3 +35,4 @@ target_compile_options(mwb_client PRIVATE
 )
 
 install(TARGETS mwb_client RUNTIME DESTINATION bin RENAME mwb-client)
+install(PROGRAMS tui/mwb-tui DESTINATION bin)

@@ -3,6 +3,7 @@
 The RPM installs:
 
 - `/usr/bin/mwb-client`
+- `/usr/bin/mwb-tui`
 - `/usr/lib/udev/rules.d/90-mwb-client-uinput.rules`
 
 The udev rule grants the active local desktop session access to `/dev/uinput` through `TAG+="uaccess"`. After installing, reload udev rules or reboot:
@@ -12,7 +13,13 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger /dev/uinput
 ```
 
-Run the client with the Windows machine IP and enter the PowerToys Mouse Without Borders key at the hidden prompt:
+Run the terminal UI:
+
+```bash
+mwb-tui
+```
+
+Or run the client directly with the Windows machine IP and enter the PowerToys Mouse Without Borders key at the hidden prompt:
 
 ```bash
 mwb-client 192.168.1.10

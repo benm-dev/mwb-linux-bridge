@@ -1,0 +1,395 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+app_name="MWB Linux Bridge"
+default_port="15101"
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "${script_dir}/.." && pwd)"
+
+config_home="${XDG_CONFIG_HOME:-${HOME:-}/.config}"
+config_dir="${config_home}/mwb-linux-bridge"
+config_file="${config_dir}/config"
+default_key_file="${config_dir}/key"
+
+windows_ip=""
+port="${default_port}"
+security_key_file=""
+
+trim() {
+    local value="$*"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s' "${value}"
+}
+
+strip_whitespace() {
+    local value="$1"
+    printf '%s' "${value}" | tr -d '[:space:]'
+}
+
+expand_path() {
+    local value="$1"
+    if [[ "${value}" == "~" ]]; then
+        printf '%s' "${HOME:-~}"
+    elif [[ "${value}" == "~/"* ]]; then
+        printf '%s/%s' "${HOME:-~}" "${value#~/}"
+    else
+        printf '%s' "${value}"
+    fi
+}
+
+pause() {
+    printf '\n'
+    read -r -p "Press Enter to continue..." _
+}
+
+clear_screen() {
+    if [[ -t 1 ]]; then
+        printf '\033[2J\033[H'
+    fi
+}
+
+read_config() {
+    windows_ip=""
+    port="${default_port}"
+    security_key_file=""
+
+    [[ -f "${config_file}" ]] || return 0
+
+    local line key value
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+        line="$(trim "${line}")"
+        [[ -z "${line}" || "${line}" == \#* ]] && continue
+        [[ "${line}" == *=* ]] || continue
+        key="$(trim "${line%%=*}")"
+        value="$(trim "${line#*=}")"
+        case "${key}" in
+            windows_ip|host) windows_ip="${value}" ;;
+            port) port="${value}" ;;
+            security_key_file) security_key_file="$(expand_path "${value}")" ;;
+        esac
+    done < "${config_file}"
+}
+
+write_config() {
+    mkdir -p "${config_dir}"
+    chmod 700 "${config_dir}" 2>/dev/null || true
+
+    local key_path="${security_key_file}"
+    if [[ -n "${key_path}" && "${key_path}" == "${HOME:-}/"* ]]; then
+        key_path="~/${key_path#"${HOME:-}/"}"
+    fi
+
+    umask 077
+    {
+        printf '# MWB Linux Bridge config\n'
+        printf '# Managed by mwb-tui. You can edit this file by hand.\n'
+        printf 'windows_ip=%s\n' "${windows_ip}"
+        printf 'port=%s\n' "${port:-${default_port}}"
+        if [[ -n "${key_path}" ]]; then
+            printf 'security_key_file=%s\n' "${key_path}"
+        else
+            printf '# security_key_file=~/.config/mwb-linux-bridge/key\n'
+        fi
+    } > "${config_file}"
+    chmod 600 "${config_file}" 2>/dev/null || true
+}
+
+valid_port() {
+    local value="$1"
+    [[ "${value}" =~ ^[0-9]+$ ]] || return 1
+    (( value >= 1 && value <= 65535 ))
+}
+
+resolve_client() {
+    local candidates=(
+        "${MWB_CLIENT_BIN:-}"
+        "${repo_root}/build/mwb_client"
+        "${repo_root}/build/mwb-client"
+        "/usr/local/bin/mwb-client"
+        "/usr/bin/mwb-client"
+    )
+
+    local from_path=""
+    if from_path="$(command -v mwb-client 2>/dev/null)"; then
+        candidates+=("${from_path}")
+    fi
+
+    local candidate
+    for candidate in "${candidates[@]}"; do
+        [[ -n "${candidate}" && -x "${candidate}" ]] && {
+            printf '%s' "${candidate}"
+            return 0
+        }
+    done
+    return 1
+}
+
+uinput_state() {
+    if [[ ! -e /dev/uinput ]]; then
+        printf 'missing'
+    elif [[ -w /dev/uinput ]]; then
+        printf 'writable'
+    else
+        printf 'not writable'
+    fi
+}
+
+route_state() {
+    [[ -n "${windows_ip}" ]] || return 0
+    ip route get "${windows_ip}" 2>/dev/null | head -n 1 || true
+}
+
+tcp_state() {
+    [[ -n "${windows_ip}" ]] || {
+        printf 'not configured'
+        return 0
+    }
+
+    if timeout 2 bash -c ":</dev/tcp/${windows_ip}/${port:-${default_port}}" >/dev/null 2>&1; then
+        printf 'open'
+    else
+        printf 'closed or filtered'
+    fi
+}
+
+print_status() {
+    read_config
+
+    local client_bin="not found"
+    if resolved="$(resolve_client)"; then
+        client_bin="${resolved}"
+    fi
+
+    local key_status="prompt at start"
+    if [[ -n "${security_key_file}" ]]; then
+        if [[ -f "${security_key_file}" ]]; then
+            key_status="stored at ${security_key_file}"
+        else
+            key_status="configured but missing: ${security_key_file}"
+        fi
+    fi
+
+    printf '%s TUI status\n' "${app_name}"
+    printf 'Config:     %s%s\n' "${config_file}" "$([[ -f "${config_file}" ]] || printf ' (missing)')"
+    printf 'Windows:    %s\n' "${windows_ip:-not configured}"
+    printf 'Port:       %s\n' "${port:-${default_port}}"
+    printf 'Key:        %s\n' "${key_status}"
+    printf 'Client:     %s\n' "${client_bin}"
+    printf 'uinput:     %s\n' "$(uinput_state)"
+    printf 'Session:    %s %s\n' "${XDG_SESSION_TYPE:-unknown}" "${XDG_CURRENT_DESKTOP:-}"
+    if [[ -n "${windows_ip}" ]]; then
+        printf 'Route:      %s\n' "$(route_state)"
+        printf 'TCP %s: %s\n' "${port:-${default_port}}" "$(tcp_state)"
+    fi
+}
+
+prompt_with_default() {
+    local label="$1"
+    local current="$2"
+    local value=""
+    if [[ -n "${current}" ]]; then
+        read -r -p "${label} [${current}]: " value
+        printf '%s' "${value:-${current}}"
+    else
+        read -r -p "${label}: " value
+        printf '%s' "${value}"
+    fi
+}
+
+save_key_interactive() {
+    local first second
+    printf 'Paste the PowerToys security key. Input is hidden.\n'
+    read -r -s -p "Security key: " first
+    printf '\n'
+    read -r -s -p "Confirm key: " second
+    printf '\n'
+
+    first="$(strip_whitespace "${first}")"
+    second="$(strip_whitespace "${second}")"
+    if [[ -z "${first}" ]]; then
+        printf 'Key was empty; not saved.\n'
+        return 1
+    fi
+    if [[ "${first}" != "${second}" ]]; then
+        printf 'Keys did not match; not saved.\n'
+        return 1
+    fi
+
+    mkdir -p "${config_dir}"
+    chmod 700 "${config_dir}" 2>/dev/null || true
+    umask 077
+    printf '%s\n' "${first}" > "${default_key_file}"
+    chmod 600 "${default_key_file}" 2>/dev/null || true
+    security_key_file="${default_key_file}"
+    write_config
+    printf 'Saved key to %s\n' "${default_key_file}"
+}
+
+configure_connection() {
+    read_config
+    clear_screen
+    printf '%s connection setup\n\n' "${app_name}"
+
+    windows_ip="$(prompt_with_default "Windows IP/host" "${windows_ip}")"
+    while [[ -z "${windows_ip}" ]]; do
+        printf 'Windows IP/host is required.\n'
+        windows_ip="$(prompt_with_default "Windows IP/host" "${windows_ip}")"
+    done
+
+    local new_port
+    new_port="$(prompt_with_default "Port" "${port:-${default_port}}")"
+    while ! valid_port "${new_port}"; do
+        printf 'Port must be 1-65535. Use 15101 for Mouse Without Borders input.\n'
+        new_port="$(prompt_with_default "Port" "${default_port}")"
+    done
+    port="${new_port}"
+
+    local key_choice
+    printf '\nSecurity key mode:\n'
+    printf '  1) Prompt every time\n'
+    printf '  2) Save key to %s\n' "${default_key_file}"
+    read -r -p "Choose [1/2, default 1]: " key_choice
+    case "${key_choice:-1}" in
+        2)
+            security_key_file="${default_key_file}"
+            write_config
+            save_key_interactive || true
+            ;;
+        *)
+            security_key_file=""
+            write_config
+            ;;
+    esac
+
+    write_config
+    printf '\nSaved %s\n' "${config_file}"
+    pause
+}
+
+remove_saved_key() {
+    read_config
+    if [[ -f "${default_key_file}" ]]; then
+        rm -f "${default_key_file}"
+        printf 'Removed %s\n' "${default_key_file}"
+    else
+        printf 'No saved key at %s\n' "${default_key_file}"
+    fi
+    security_key_file=""
+    write_config
+    pause
+}
+
+edit_config() {
+    read_config
+    [[ -f "${config_file}" ]] || write_config
+    "${EDITOR:-vi}" "${config_file}"
+}
+
+install_uinput_rule() {
+    clear_screen
+    printf 'This installs a host udev rule so your desktop session can write /dev/uinput.\n'
+    printf 'It will use sudo and write /etc/udev/rules.d/90-mwb-client-uinput.rules.\n\n'
+    read -r -p "Continue? [y/N]: " answer
+    [[ "${answer}" =~ ^[Yy]$ ]] || return 0
+
+    printf 'KERNEL=="uinput", MODE="0660", TAG+="uaccess"\n' \
+        | sudo tee /etc/udev/rules.d/90-mwb-client-uinput.rules >/dev/null
+    sudo udevadm control --reload-rules
+    sudo udevadm trigger /dev/uinput || sudo udevadm trigger
+    printf 'Installed uinput rule. Log out and back in if /dev/uinput is still not writable.\n'
+    pause
+}
+
+start_bridge() {
+    read_config
+    if [[ -z "${windows_ip}" ]]; then
+        printf 'Windows IP/host is not configured yet.\n'
+        pause
+        configure_connection
+        read_config
+    fi
+
+    local client_bin
+    if ! client_bin="$(resolve_client)"; then
+        printf 'mwb-client was not found.\n'
+        printf 'Build it with: cmake -S . -B build && cmake --build build\n'
+        printf 'Or install the RPM/native package so mwb-client is on PATH.\n'
+        pause
+        return 1
+    fi
+
+    if [[ "$(uinput_state)" != "writable" ]]; then
+        printf '/dev/uinput is %s. Input injection may fail.\n' "$(uinput_state)"
+        read -r -p "Start anyway? [y/N]: " answer
+        [[ "${answer}" =~ ^[Yy]$ ]] || return 0
+    fi
+
+    clear_screen
+    printf 'Starting %s --config %s\n' "${client_bin}" "${config_file}"
+    printf 'Press Ctrl+C to stop the bridge.\n\n'
+    "${client_bin}" --config "${config_file}"
+    local status=$?
+    printf '\nmwb-client exited with status %s\n' "${status}"
+    pause
+    return "${status}"
+}
+
+main_menu() {
+    while true; do
+        read_config
+        clear_screen
+        printf '%s TUI\n' "${app_name}"
+        printf 'Config:  %s\n' "${config_file}"
+        printf 'Windows: %s\n' "${windows_ip:-not configured}"
+        printf 'Port:    %s\n' "${port:-${default_port}}"
+        printf 'uinput:  %s\n' "$(uinput_state)"
+        printf '\n'
+        printf '1) Start bridge\n'
+        printf '2) Configure connection\n'
+        printf '3) Save/update security key\n'
+        printf '4) Remove saved security key\n'
+        printf '5) Runtime status\n'
+        printf '6) Install uinput rule\n'
+        printf '7) Edit config in $EDITOR\n'
+        printf 'q) Quit\n'
+        printf '\n'
+        read -r -p "Choose: " choice
+        case "${choice}" in
+            1) start_bridge || true ;;
+            2) configure_connection ;;
+            3) read_config; security_key_file="${default_key_file}"; write_config; save_key_interactive || pause ;;
+            4) remove_saved_key ;;
+            5) clear_screen; print_status; pause ;;
+            6) install_uinput_rule ;;
+            7) edit_config ;;
+            q|Q) break ;;
+            *) printf 'Unknown choice.\n'; pause ;;
+        esac
+    done
+}
+
+usage() {
+    cat <<EOF
+Usage: mwb-tui [--status] [--help]
+
+Interactive terminal UI for configuring and launching MWB Linux Bridge.
+EOF
+}
+
+case "${1:-}" in
+    --status)
+        print_status
+        ;;
+    --help|-h)
+        usage
+        ;;
+    "")
+        main_menu
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac
