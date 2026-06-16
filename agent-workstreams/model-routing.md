@@ -29,5 +29,8 @@ The usage monitor watches:
 - Codex, Claude, and Antigravity process CPU and memory
 - worktree dirty counts
 - Codex process command lines, including selected model when present
+- Codex local JSONL token totals from `~/.codex/sessions`
+- Claude local JSONL token totals from `~/.claude/projects`
+- rough USD estimates where local token totals and configured public API prices are available
 
-These are local resource signals, not API billing totals. If provider token/cost telemetry becomes available, add it to `scripts/watch-agent-usage.sh` rather than guessing.
+These are local telemetry signals, not provider invoices. Antigravity quota appears to be cloud-account data surfaced by the logged-in app; no stable local token/credit record or `agy` command is available here yet.

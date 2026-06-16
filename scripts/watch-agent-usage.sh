@@ -59,6 +59,14 @@ while true; do
             }
         '
 
+    printf '\nprovider token/cost usage:\n'
+    if [[ -x "${repo_root}/scripts/extract-agent-usage.py" ]]; then
+        "${repo_root}/scripts/extract-agent-usage.py" --root "${parent_dir}" --limit "${USAGE_LINES:-8}" \
+            | sed 's/^/  /'
+    else
+        printf '  scripts/extract-agent-usage.py is missing or not executable\n'
+    fi
+
     printf '\nworktree status:\n'
     for tree in "${worktrees[@]}"; do
         [[ -d "${tree}" ]] || continue
