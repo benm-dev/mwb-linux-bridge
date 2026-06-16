@@ -1,0 +1,40 @@
+{
+  "name": "mwb-linux-bridge-gui",
+  "version": "0.1.0",
+  "description": "Electron GUI for MWB Linux Bridge",
+  "homepage": "https://github.com/benm-dev/mwb-linux-bridge",
+  "main": "src/main.js",
+  "desktopName": "mwb-linux-bridge",
+  "author": "Ben",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "dist:dir": "electron-builder --linux dir",
+    "dist:linux": "electron-builder --linux AppImage",
+    "dist:rpm": "electron-builder --linux rpm"
+  },
+  "devDependencies": {
+    "electron": "42.4.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "dev.benm.mwb-linux-bridge",
+    "productName": "MWB Linux Bridge",
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "linux": {
+      "category": "Utility",
+      "synopsis": "PowerToys Mouse Without Borders compatible Linux bridge",
+      "syncDesktopName": true,
+      "target": [
+        "AppImage"
+      ],
+      "maintainer": "Ben"
+    }
+  }
+}

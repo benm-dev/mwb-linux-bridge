@@ -2,6 +2,10 @@
 build/
 dist/
 *.rpm
+gui/node_modules/
+gui/dist/
+gui/release/
+gui/out/
 
 # Working/research files not for public release
 gemini/

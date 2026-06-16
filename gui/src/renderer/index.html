@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MWB Linux Bridge</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>MWB Linux Bridge</h1>
+          <p id="subtitle">PowerToys Mouse Without Borders compatible Linux client</p>
+        </div>
+        <div id="runState" class="status-pill">Stopped</div>
+      </header>
+
+      <section class="grid">
+        <form id="settingsForm" class="panel connection-panel">
+          <div class="panel-title">
+            <h2>Connection</h2>
+            <span id="configPath" class="muted"></span>
+          </div>
+
+          <label>
+            Windows IP or host
+            <input id="windowsIp" name="windowsIp" autocomplete="off" placeholder="192.168.1.10">
+          </label>
+
+          <label>
+            Port
+            <input id="port" name="port" inputmode="numeric" placeholder="15101">
+          </label>
+
+          <label>
+            Client binary
+            <div class="row">
+              <input id="binaryPath" name="binaryPath" autocomplete="off" placeholder="/usr/bin/mwb-client">
+              <button id="chooseBinary" type="button" class="secondary">Choose</button>
+            </div>
+          </label>
+
+          <fieldset class="key-box">
+            <legend>Security Key</legend>
+            <label class="inline">
+              <input id="storeKey" type="checkbox">
+              Save key in a private file
+            </label>
+            <input id="securityKey" type="password" autocomplete="off" placeholder="Enter key">
+            <div id="keyPath" class="muted"></div>
+          </fieldset>
+
+          <div class="actions">
+            <button id="saveSettings" type="submit" class="secondary">Save</button>
+            <button id="startClient" type="button" class="primary">Start</button>
+            <button id="stopClient" type="button" class="danger">Stop</button>
+          </div>
+        </form>
+
+        <aside class="panel runtime-panel">
+          <div class="panel-title">
+            <h2>Runtime</h2>
+            <button id="refreshState" type="button" class="secondary compact">Refresh</button>
+          </div>
+          <dl class="facts">
+            <dt>Session</dt>
+            <dd id="sessionType">unknown</dd>
+            <dt>Desktop</dt>
+            <dd id="desktopName">unknown</dd>
+            <dt>Display</dt>
+            <dd id="displayServer">unknown</dd>
+            <dt>uinput</dt>
+            <dd id="uinputState">unknown</dd>
+            <dt>Binary</dt>
+            <dd id="binaryState">unknown</dd>
+          </dl>
+        </aside>
+      </section>
+
+      <section class="panel logs-panel">
+        <div class="panel-title">
+          <h2>Log</h2>
+          <button id="clearLogs" type="button" class="secondary compact">Clear</button>
+        </div>
+        <pre id="logOutput"></pre>
+      </section>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>

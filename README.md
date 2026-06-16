@@ -25,6 +25,9 @@ Works on both X11 and Wayland via Linux's `uinput` kernel interface.
 mwb-linux-bridge/
 ├── CMakeLists.txt
 ├── Dockerfile
+├── gui/
+│   ├── package.json
+│   └── src/
 ├── packaging/
 │   ├── 90-mwb-client-uinput.rules
 │   ├── config.example
@@ -108,6 +111,27 @@ After that, run:
 ```
 
 Supported config keys are `windows_ip`, `host`, `port`, and `security_key_file`. If `security_key_file` is omitted, the client prompts for the key.
+
+## Electron GUI
+
+The Electron GUI is a Linux desktop frontend for the same `mwb-client` binary and config file. It uses standard Electron windows, no tray-only workflow, no global shortcuts, and no compositor-specific APIs, so it can run under common desktop environments and window managers on X11 or Wayland.
+
+Run in development:
+
+```bash
+cd gui
+npm install
+npm start
+```
+
+Build the portable Linux AppImage:
+
+```bash
+cd gui
+npm run dist:linux
+```
+
+The GUI checks the session type, desktop name, `/dev/uinput` access, and the resolved `mwb-client` binary path. It can save connection settings to `~/.config/mwb-linux-bridge/config` and, if selected, store the key in `~/.config/mwb-linux-bridge/key` with private file permissions.
 
 ### Setup in PowerToys
 
